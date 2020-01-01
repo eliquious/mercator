@@ -371,7 +371,8 @@ func (s *binanceScope) addDepthCommand(env *Environment, cmd *cobra.Command) {
 				}
 				fmt.Printf(" % 12s %s\n", color.Cyan.Render(bid.Price), PadLeft(fmt.Sprintf("%0.4f", quant), " ", 15))
 			}
-			fmt.Println("------------ -----------------\n")
+			fmt.Println("------------ -----------------")
+			fmt.Println()
 		},
 	}
 	cmd.AddCommand(accountBalanceCommand)
