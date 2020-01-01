@@ -17,14 +17,17 @@ func main() {
 		prompt.OptionTitle("mercator"),
 		prompt.OptionPrefix("mercator> "),
 		prompt.OptionLivePrefix(env.ChangeLivePrefix),
+		prompt.OptionMaxSuggestion(12),
 
 		// Text colors
+		prompt.OptionScrollbarThumbColor(prompt.Red),
+		prompt.OptionScrollbarBGColor(prompt.White),
 		prompt.OptionPrefixTextColor(prompt.Red),
 		prompt.OptionInputTextColor(prompt.White),
 		prompt.OptionDescriptionBGColor(prompt.LightGray),
 		prompt.OptionDescriptionTextColor(prompt.DarkGray),
 		prompt.OptionSuggestionBGColor(prompt.DarkGray),
-		prompt.OptionSuggestionTextColor(prompt.LightGray),
+		prompt.OptionSuggestionTextColor(prompt.White),
 		prompt.OptionSelectedSuggestionBGColor(prompt.LightGray),
 		prompt.OptionSelectedSuggestionTextColor(prompt.DarkGray),
 		prompt.OptionSelectedDescriptionBGColor(prompt.DarkGray),

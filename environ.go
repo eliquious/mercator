@@ -98,21 +98,26 @@ func (env *Environment) CompletorFunc(doc prompt.Document) []prompt.Suggest {
 
 	// Get suggestions from current scope
 	scope := env.CurrentScope()
-	suggestions := getSuggestions(line, scope.GetCommand().Commands())
+	suggestions := getSuggestions(line, scope.GetCommand().Commands(), doc.GetWordBeforeCursor())
 	return prompt.FilterFuzzy(suggestions, doc.GetWordBeforeCursor(), true)
 }
 
-func getSuggestions(line string, commands []*cobra.Command) []prompt.Suggest {
+func getSuggestions(line string, commands []*cobra.Command, prevWord string) []prompt.Suggest {
 	rootCompletions := []prompt.Suggest{}
 	for _, cmd := range commands {
 		if strings.HasPrefix(line, cmd.Use) {
-			suggestions := getSuggestions(line, cmd.Commands())
+			suggestions := getSuggestions(line, cmd.Commands(), prevWord)
 
-			var flagSuggestions []prompt.Suggest
 			cmd.Flags().VisitAll(func(flag *pflag.Flag) {
-				flagSuggestions = append(flagSuggestions, prompt.Suggest{Text: flag.Name, Description: flag.Usage})
+				suggestions = append(suggestions, prompt.Suggest{Text: flag.Name, Description: flag.Usage})
 			})
-			return append(suggestions, flagSuggestions...)
+
+			if len(cmd.ValidArgs) > 0 && len(prevWord) > 0 {
+				for _, arg := range cmd.ValidArgs {
+					suggestions = append(suggestions, prompt.Suggest{Text: arg, Description: ""})
+				}
+			}
+			return suggestions
 		}
 		rootCompletions = append(rootCompletions, prompt.Suggest{Text: cmd.Use, Description: cmd.Short})
 	}

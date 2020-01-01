@@ -7,6 +7,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/adshao/go-binance"
@@ -28,17 +29,7 @@ func NewBinanceExchangeScope(env *Environment, apiKey string, apiSecret string) 
 		return nil, errors.New("failed to list symbols")
 	}
 
-	symbolMap := make(map[string]binance.Symbol, len(resp.Symbols))
-	baseAssetMap := make(map[string][]binance.Symbol, len(resp.Symbols))
-	quoteAssetMap := make(map[string][]binance.Symbol, 16)
-	for index := 0; index < len(resp.Symbols); index++ {
-		symbol := resp.Symbols[index]
-		symbolMap[symbol.Symbol] = symbol
-		baseAssetMap[symbol.BaseAsset] = append(baseAssetMap[symbol.BaseAsset], symbol)
-		quoteAssetMap[symbol.QuoteAsset] = append(baseAssetMap[symbol.QuoteAsset], symbol)
-	}
-
-	scope := &binanceScope{prefix: "binance", description: "Access exchange info", client: client, symbolMap: symbolMap, baseAssetMap: baseAssetMap, quoteAssetMap: quoteAssetMap}
+	scope := &binanceScope{prefix: "binance", description: "Access exchange info", client: client, symbols: resp.Symbols}
 	rootCommand := &cobra.Command{Use: scope.prefix, Short: scope.description}
 
 	scope.addRateLimitCommand(env, rootCommand)
@@ -55,13 +46,11 @@ func NewBinanceExchangeScope(env *Environment, apiKey string, apiSecret string) 
 }
 
 type binanceScope struct {
-	prefix        string
-	description   string
-	client        *binance.Client
-	symbolMap     map[string]binance.Symbol
-	baseAssetMap  map[string][]binance.Symbol
-	quoteAssetMap map[string][]binance.Symbol
-	command       *cobra.Command
+	prefix      string
+	description string
+	client      *binance.Client
+	symbols     []binance.Symbol
+	command     *cobra.Command
 }
 
 func (s *binanceScope) GetScopeMeta() ScopeMeta {
@@ -126,9 +115,10 @@ func (s *binanceScope) addServerTimeCommand(env *Environment, cmd *cobra.Command
 
 func (s *binanceScope) addPriceCommands(env *Environment, cmd *cobra.Command) {
 	priceCommand := &cobra.Command{
-		Use:   "symbol-price",
-		Short: "Get the current price for the given symbols",
-		Args:  cobra.MinimumNArgs(1),
+		Use:       "symbol-price",
+		Short:     "Get the current price for the given symbols",
+		Args:      cobra.MinimumNArgs(1),
+		ValidArgs: s.getSymbolList(),
 		Run: func(cmd *cobra.Command, args []string) {
 			currentPrices, err := s.getCurrentPrices()
 			if err != nil {
@@ -149,9 +139,10 @@ func (s *binanceScope) addPriceCommands(env *Environment, cmd *cobra.Command) {
 	cmd.AddCommand(priceCommand)
 
 	assetPricesCommand := &cobra.Command{
-		Use:   "asset-price",
-		Short: "Get the all current prices for an asset",
-		Args:  cobra.MaximumNArgs(1),
+		Use:       "asset-price",
+		Short:     "Get the all current prices for an asset",
+		Args:      cobra.MaximumNArgs(1),
+		ValidArgs: s.getBaseAssetList(),
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(args) != 1 {
 				color.Error.Println("one asset must be given")
@@ -164,7 +155,8 @@ func (s *binanceScope) addPriceCommands(env *Environment, cmd *cobra.Command) {
 				return
 			}
 
-			symbols, ok := s.baseAssetMap[args[0]]
+			baseAssetMap := s.getBaseAssetMap()
+			symbols, ok := baseAssetMap[args[0]]
 			if !ok {
 				color.Error.Printf("unknown symbol: %s", args[0])
 				return
@@ -190,7 +182,8 @@ you want to know if the ETHUSDT price matches the ETHBTC/BTCUSDT price you can u
 
     convert ETHUSDT ETHBTC BTCUSDT
 		`,
-		Args: cobra.ExactArgs(3),
+		Args:      cobra.ExactArgs(3),
+		ValidArgs: s.getSymbolList(),
 		Run: func(cmd *cobra.Command, args []string) {
 			if len(args) != 3 {
 				color.Error.Println("three symbols must be given")
@@ -339,12 +332,13 @@ func (s *binanceScope) addAccountCommands(env *Environment, cmd *cobra.Command) 
 
 func (s *binanceScope) addDepthCommand(env *Environment, cmd *cobra.Command) {
 	accountBalanceCommand := &cobra.Command{
-		Use:   "depth",
-		Short: "Show symbol depth",
-		Args:  cobra.ExactArgs(1),
+		Use:       "depth",
+		Short:     "Show symbol depth",
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: s.getSymbolList(),
 		Run: func(cmd *cobra.Command, args []string) {
 			exchange := s.client.NewDepthService()
-			resp, err := exchange.Symbol(args[0]).Limit(10).Do(context.Background())
+			resp, err := exchange.Symbol(strings.ToUpper(args[0])).Limit(10).Do(context.Background())
 			if err != nil {
 				color.Error.Println(err.Error())
 				return
@@ -359,7 +353,7 @@ func (s *binanceScope) addDepthCommand(env *Environment, cmd *cobra.Command) {
 					color.Error.Println(err.Error())
 					return
 				}
-				fmt.Printf(" % 12s %s\n", color.Magenta.Render(ask.Price), PadLeft(fmt.Sprintf("%0.4f", quant), " ", 15))
+				fmt.Printf(" % 12s %s\n", color.Magenta.Render(ask.Price), padLeft(fmt.Sprintf("%0.4f", quant), " ", 15))
 			}
 			// fmt.Println("------------ -----------------")
 			fmt.Println()
@@ -369,7 +363,7 @@ func (s *binanceScope) addDepthCommand(env *Environment, cmd *cobra.Command) {
 					color.Error.Println(err.Error())
 					return
 				}
-				fmt.Printf(" % 12s %s\n", color.Cyan.Render(bid.Price), PadLeft(fmt.Sprintf("%0.4f", quant), " ", 15))
+				fmt.Printf(" % 12s %s\n", color.Cyan.Render(bid.Price), padLeft(fmt.Sprintf("%0.4f", quant), " ", 15))
 			}
 			fmt.Println("------------ -----------------")
 			fmt.Println()
@@ -378,7 +372,51 @@ func (s *binanceScope) addDepthCommand(env *Environment, cmd *cobra.Command) {
 	cmd.AddCommand(accountBalanceCommand)
 }
 
-func PadLeft(str, pad string, length int) string {
+func (s *binanceScope) getSymbolList() []string {
+	symbols := make([]string, len(s.symbols))
+	for index := 0; index < len(s.symbols); index++ {
+		symbol := s.symbols[index]
+		symbols = append(symbols, symbol.Symbol)
+	}
+	return symbols
+}
+
+func (s *binanceScope) getBaseAssetList() []string {
+	assets := make([]string, len(s.symbols))
+	for k := range s.getBaseAssetMap() {
+		assets = append(assets, k)
+	}
+	return assets
+}
+
+func (s *binanceScope) getSymbolMap() map[string]binance.Symbol {
+	symbolMap := make(map[string]binance.Symbol, len(s.symbols))
+	for index := 0; index < len(s.symbols); index++ {
+		symbol := s.symbols[index]
+		symbolMap[symbol.Symbol] = symbol
+	}
+	return symbolMap
+}
+
+func (s *binanceScope) getBaseAssetMap() map[string][]binance.Symbol {
+	baseAssetMap := make(map[string][]binance.Symbol, len(s.symbols))
+	for index := 0; index < len(s.symbols); index++ {
+		symbol := s.symbols[index]
+		baseAssetMap[symbol.BaseAsset] = append(baseAssetMap[symbol.BaseAsset], symbol)
+	}
+	return baseAssetMap
+}
+
+func (s *binanceScope) getQuoteAssetMap() map[string][]binance.Symbol {
+	quoteAssetMap := make(map[string][]binance.Symbol, 16)
+	for index := 0; index < len(s.symbols); index++ {
+		symbol := s.symbols[index]
+		quoteAssetMap[symbol.QuoteAsset] = append(quoteAssetMap[symbol.QuoteAsset], symbol)
+	}
+	return quoteAssetMap
+}
+
+func padLeft(str, pad string, length int) string {
 	for {
 		str = pad + str
 		if len(str) > length {
@@ -387,7 +425,7 @@ func PadLeft(str, pad string, length int) string {
 	}
 }
 
-func PadRight(str, pad string, length int) string {
+func padRight(str, pad string, length int) string {
 	for {
 		str += pad
 		if len(str) > length {
