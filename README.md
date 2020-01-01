@@ -1,0 +1,2 @@
+# mercator
+A personal CLI
