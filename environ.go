@@ -109,7 +109,7 @@ func getSuggestions(line string, commands []*cobra.Command, prevWord string) []p
 			suggestions := getSuggestions(line, cmd.Commands(), prevWord)
 
 			cmd.Flags().VisitAll(func(flag *pflag.Flag) {
-				suggestions = append(suggestions, prompt.Suggest{Text: flag.Name, Description: flag.Usage})
+				suggestions = append(suggestions, prompt.Suggest{Text: "--" + flag.Name, Description: flag.Usage})
 			})
 
 			if len(cmd.ValidArgs) > 0 && len(prevWord) > 0 {

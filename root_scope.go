@@ -79,8 +79,9 @@ func addHelpCommand(cmd *cobra.Command) {
 
 func addExitCommand(env *Environment, cmd *cobra.Command) {
 	exitCommand := &cobra.Command{
-		Use:   "exit",
-		Short: "Exits the current scope. Exits CLI if at top-level scope.",
+		Use:     "exit",
+		Short:   "Exits the current scope. Exits CLI if at top-level scope.",
+		Aliases: []string{"pop"},
 		Run: func(cmd *cobra.Command, args []string) {
 			env.Pop()
 		},

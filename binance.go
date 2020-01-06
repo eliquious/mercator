@@ -37,6 +37,9 @@ func NewBinanceExchangeScope(env *Environment, apiKey string, apiSecret string) 
 	scope.addAccountCommands(env, rootCommand)
 	scope.addPriceCommands(env, rootCommand)
 	scope.addDepthCommand(env, rootCommand)
+	scope.addCalcSharesCommand(env, rootCommand)
+	scope.addRiskCommand(env, rootCommand)
+	scope.addCconvertCommand(env, rootCommand)
 
 	addExitCommand(env, rootCommand)
 	addQuitCommand(env, rootCommand)
@@ -174,13 +177,13 @@ func (s *binanceScope) addPriceCommands(env *Environment, cmd *cobra.Command) {
 	}
 	cmd.AddCommand(assetPricesCommand)
 
-	convertPriceCommand := &cobra.Command{
-		Use:   "convert",
-		Short: "Convert price from one asset to another through an intermediary market",
+	comparePriceCommand := &cobra.Command{
+		Use:   "compare",
+		Short: "Compare price from one asset to another through an intermediary market",
 		Long: `This converts the price from two markets and compares the price to the direct market price. For example, if 
 you want to know if the ETHUSDT price matches the ETHBTC/BTCUSDT price you can use this command.
 
-    convert ETHUSDT ETHBTC BTCUSDT
+    compare ETHUSDT ETHBTC BTCUSDT
 		`,
 		Args:      cobra.ExactArgs(3),
 		ValidArgs: s.getSymbolList(),
@@ -254,7 +257,7 @@ you want to know if the ETHUSDT price matches the ETHBTC/BTCUSDT price you can u
 			}
 		},
 	}
-	cmd.AddCommand(convertPriceCommand)
+	cmd.AddCommand(comparePriceCommand)
 }
 
 func (s *binanceScope) getCurrentPrices() (map[string]string, error) {
@@ -372,6 +375,201 @@ func (s *binanceScope) addDepthCommand(env *Environment, cmd *cobra.Command) {
 	cmd.AddCommand(accountBalanceCommand)
 }
 
+func (s *binanceScope) addCalcSharesCommand(env *Environment, cmd *cobra.Command) {
+	var inv, price float64
+	// var symbol string
+	command := &cobra.Command{
+		Use:   "shares",
+		Short: "Calculate shares if bought at a certain price",
+		Run: func(cmd *cobra.Command, args []string) {
+			if price == 0 && len(args) == 0 {
+				color.Error.Println("either price or symbol is required")
+				return
+			}
+
+			if len(args) > 0 {
+				prices, err := s.getCurrentPrices()
+				if err != nil {
+					color.Error.Println("either price or symbol is required")
+					return
+				}
+
+				marketPrice, ok := prices[strings.ToUpper(args[0])]
+				if !ok {
+					color.Error.Println("unknown symbol")
+					return
+				}
+
+				price, err = strconv.ParseFloat(marketPrice, 64)
+				if err != nil {
+					color.Error.Println("could not parse current price")
+					return
+				}
+			}
+
+			if len(args) > 1 {
+				color.Warn.Printf("more than one symbol provided. using %s", args[0])
+			}
+
+			if price == 0 {
+				color.Error.Println("current price is 0.0")
+				return
+			} else if price < 0 {
+				color.Error.Println("price must be positive")
+				return
+			}
+
+			//
+			if len(args) > 0 {
+				info, err := s.getSymbolInfo(strings.ToUpper(args[0]))
+				if err != nil {
+					color.Error.Println(err.Error())
+					return
+				}
+
+				fmt.Printf("%s: %s %s buys %s %s at %s\n",
+					color.LightGreen.Render("Shares"),
+					formatBasePrice(info, inv),
+					color.LightBlue.Render(info.QuoteAsset),
+					formatBasePrice(info, inv/price),
+					color.LightBlue.Render(info.BaseAsset),
+					formatQuotePrice(info, price),
+				)
+			} else {
+				fmt.Printf("%s: %.8f at %.8f\n", color.Green.Render("Shares"), inv/price, price)
+			}
+		},
+	}
+	command.Flags().Float64VarP(&inv, "inv", "i", 0, "Investment amount")
+	command.Flags().Float64VarP(&price, "price", "p", 1, "Buy price")
+	command.MarkFlagRequired("inv")
+	command.ValidArgs = s.getSymbolList()
+	cmd.AddCommand(command)
+}
+
+func (s *binanceScope) addRiskCommand(env *Environment, cmd *cobra.Command) {
+	var inv, entry, stop, ratio float64
+	command := &cobra.Command{
+		Use:   "risk",
+		Short: "Calculate risk if bought and sold at certain prices",
+		Args:  cobra.ExactArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+			if entry <= 0 {
+				color.Error.Println("entry price is required")
+				return
+			}
+			if stop <= 0 {
+				color.Error.Println("stop price is required")
+				return
+			} else if stop >= entry {
+				color.Error.Println("stop price must be less than entry price")
+				return
+			}
+			if ratio <= 0 {
+				color.Error.Println("risk/reward ratio must be greater than 0")
+				return
+			}
+
+			//
+			info, err := s.getSymbolInfo(strings.ToUpper(args[0]))
+			if err != nil {
+				color.Error.Println(err.Error())
+				return
+			}
+
+			shares := inv / entry
+			fmt.Printf("%s: %s %s buys %s %s at %s\n",
+				color.Green.Render("Shares"),
+				formatBasePrice(info, inv),
+				color.LightBlue.Render(info.QuoteAsset),
+				formatBasePrice(info, shares),
+				color.LightBlue.Render(info.BaseAsset),
+				formatQuotePrice(info, entry),
+			)
+			fmt.Printf("%s: %s %s\n",
+				color.Green.Render("Risk"),
+				formatBasePrice(info, shares*(entry-stop)),
+				color.LightBlue.Render(info.QuoteAsset),
+			)
+			fmt.Printf("%s: %s %s if sold at %s %s\n",
+				color.Green.Render("Earnings"),
+				formatBasePrice(info, shares*(entry-stop)*ratio),
+				color.LightBlue.Render(info.QuoteAsset),
+				formatBasePrice(info, entry+(entry-stop)*ratio),
+				color.LightBlue.Render(info.BaseAsset),
+			)
+		},
+	}
+	command.Flags().Float64Var(&inv, "inv", 0, "Investment amount")
+	command.Flags().Float64Var(&entry, "entry", 1, "Entry price")
+	command.Flags().Float64Var(&stop, "stop", 1, "Stop price")
+	command.Flags().Float64Var(&ratio, "ratio", 2, "Risk/reward ratio")
+	command.MarkFlagRequired("inv")
+	command.MarkFlagRequired("entry")
+	command.MarkFlagRequired("stop")
+	command.ValidArgs = s.getSymbolList()
+	cmd.AddCommand(command)
+}
+
+func (s *binanceScope) addCconvertCommand(env *Environment, cmd *cobra.Command) {
+	var amount float64
+	command := &cobra.Command{
+		Use:   "convert",
+		Short: "Convert returns the value of an asset for the given symbols",
+		Args:  cobra.MinimumNArgs(1),
+		Run: func(cmd *cobra.Command, args []string) {
+
+			prices, err := s.getCurrentPrices()
+			if err != nil {
+				color.Error.Println("failed toget current prices")
+				return
+			}
+
+			for _, arg := range args {
+				arg = strings.ToUpper(arg)
+				marketPrice, ok := prices[strings.ToUpper(args[0])]
+				if !ok {
+					color.Error.Println("unknown symbol")
+					continue
+				}
+
+				price, err := strconv.ParseFloat(marketPrice, 64)
+				if err != nil {
+					color.Error.Println("could not parse current price of ", arg)
+					continue
+				}
+
+				info, err := s.getSymbolInfo(strings.ToUpper(args[0]))
+				if err != nil {
+					color.Error.Println(err.Error())
+					continue
+				}
+
+				fmt.Printf("%s: %s\n",
+					color.LightGreen.Render(arg),
+					formatBasePrice(info, amount*price),
+				)
+			}
+		},
+	}
+	command.Flags().Float64Var(&amount, "amount", 1, "Amount of asset")
+	command.MarkFlagRequired("amount")
+	command.ValidArgs = s.getSymbolList()
+	cmd.AddCommand(command)
+}
+
+func formatQuotePrice(symbol binance.Symbol, price float64) string {
+	return fmt.Sprintf(getSymbolFormat(symbol.QuotePrecision), price)
+}
+
+func formatBasePrice(symbol binance.Symbol, price float64) string {
+	return fmt.Sprintf(getSymbolFormat(symbol.BaseAssetPrecision), price)
+}
+
+func getSymbolFormat(precision int) string {
+	return fmt.Sprintf("%%.%df", precision)
+}
+
 func (s *binanceScope) getSymbolList() []string {
 	symbols := make([]string, len(s.symbols))
 	for index := 0; index < len(s.symbols); index++ {
@@ -396,6 +594,15 @@ func (s *binanceScope) getSymbolMap() map[string]binance.Symbol {
 		symbolMap[symbol.Symbol] = symbol
 	}
 	return symbolMap
+}
+
+func (s *binanceScope) getSymbolInfo(symbol string) (binance.Symbol, error) {
+	symbolMap := s.getSymbolMap()
+	info, ok := symbolMap[symbol]
+	if !ok {
+		return info, errors.New("unknown symbol: " + symbol)
+	}
+	return info, nil
 }
 
 func (s *binanceScope) getBaseAssetMap() map[string][]binance.Symbol {
