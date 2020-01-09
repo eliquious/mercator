@@ -5,17 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
-
-	// "math"
-	"os"
-	// "sort"
-	// "strconv"
-	// "strings"
-	// "time"
 
 	"github.com/adshao/go-binance"
 	"github.com/eliquious/console"
@@ -47,8 +41,7 @@ func NewBinanceExchangeScope() (*console.Scope, error) {
 	addAccountCommands(scope, client)
 	addDepthCommand(scope, client, resp.Symbols)
 	addCalcSharesCommand(scope, client, resp.Symbols)
-
-	// scope.addRiskCommand(env, rootCommand)
+	addRiskCommand(scope, client, resp.Symbols)
 	addConvertCommand(scope, client, resp.Symbols)
 
 	return scope, nil
@@ -61,14 +54,6 @@ type binanceScope struct {
 	symbols     []binance.Symbol
 	command     *cobra.Command
 }
-
-// func (s *binanceScope) GetScopeMeta() ScopeMeta {
-// 	return ScopeMeta{s.prefix, s.description}
-// }
-
-// func (s *binanceScope) GetCommand() *cobra.Command {
-// 	return s.command
-// }
 
 func addRateLimitCommand(scope *console.Scope, client *binance.Client) {
 	rateCommand := &console.Command{
@@ -395,7 +380,7 @@ func addCalcSharesCommand(scope *console.Scope, client *binance.Client, symbols 
 	command := &console.Command{
 		Use:              "shares",
 		Short:            "Calculate shares if bought at a certain price",
-		EagerSuggestions: true,
+		EagerSuggestions: false,
 		Suggestions: func(env *console.Environment, args []string) []string {
 			if contains(args, "--inv") && len(args) > 2 {
 				return getSymbolList(symbols)
@@ -465,69 +450,66 @@ func addCalcSharesCommand(scope *console.Scope, client *binance.Client, symbols 
 	scope.AddCommand(command)
 }
 
-// func (s *binanceScope) addRiskCommand(env *Environment, cmd *cobra.Command) {
-// 	var inv, entry, stop, ratio float64
-// 	command := &cobra.Command{
-// 		Use:   "risk",
-// 		Short: "Calculate risk if bought and sold at certain prices",
-// 		Args:  cobra.ExactArgs(1),
-// 		Run: func(cmd *cobra.Command, args []string) {
-// 			if entry <= 0 {
-// 				color.Error.Println("entry price is required")
-// 				return
-// 			}
-// 			if stop <= 0 {
-// 				color.Error.Println("stop price is required")
-// 				return
-// 			} else if stop >= entry {
-// 				color.Error.Println("stop price must be less than entry price")
-// 				return
-// 			}
-// 			if ratio <= 0 {
-// 				color.Error.Println("risk/reward ratio must be greater than 0")
-// 				return
-// 			}
+func addRiskCommand(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
+	var inv, entry, stop, ratio float64
+	command := &console.Command{
+		Use:          "risk",
+		Short:        "Calculate risk if bought and sold at certain prices",
+		ValidateArgs: console.ExactArgs(1),
+		Suggestions: func(env *console.Environment, args []string) []string {
+			return getSymbolList(symbols)
+		},
+		Run: func(env *console.Environment, cmd *console.Command, args []string) error {
+			if entry <= 0 {
+				return errors.New("entry price is required")
+			}
+			if stop <= 0 {
+				return errors.New("stop price is required")
+			} else if stop >= entry {
+				return errors.New("stop price must be less than entry price")
+			}
+			if ratio <= 0 {
+				return errors.New("risk/reward ratio must be greater than 0")
+			}
 
-// 			//
-// 			info, err := s.getSymbolInfo(strings.ToUpper(args[0]))
-// 			if err != nil {
-// 				color.Error.Println(err.Error())
-// 				return
-// 			}
+			//
+			info, err := getSymbolInfo(symbols, strings.ToUpper(args[0]))
+			if err != nil {
+				color.Error.Println(err.Error())
+				return err
+			}
 
-// 			shares := inv / entry
-// 			fmt.Printf("%s: %s %s buys %s %s at %s\n",
-// 				color.Green.Render("Shares"),
-// 				formatBasePrice(info, inv),
-// 				color.LightBlue.Render(info.QuoteAsset),
-// 				formatBasePrice(info, shares),
-// 				color.LightBlue.Render(info.BaseAsset),
-// 				formatQuotePrice(info, entry),
-// 			)
-// 			fmt.Printf("%s: %s %s\n",
-// 				color.Green.Render("Risk"),
-// 				formatBasePrice(info, shares*(entry-stop)),
-// 				color.LightBlue.Render(info.QuoteAsset),
-// 			)
-// 			fmt.Printf("%s: %s %s if sold at %s %s\n",
-// 				color.Green.Render("Earnings"),
-// 				formatBasePrice(info, shares*(entry-stop)*ratio),
-// 				color.LightBlue.Render(info.QuoteAsset),
-// 				formatBasePrice(info, entry+(entry-stop)*ratio),
-// 				color.LightBlue.Render(info.BaseAsset),
-// 			)
-// 		},
-// 	}
-// 	command.Flags().Float64Var(&inv, "inv", 0, "Investment amount")
-// 	command.Flags().Float64Var(&entry, "entry", 1, "Entry price")
-// 	command.Flags().Float64Var(&stop, "stop", 1, "Stop price")
-// 	command.Flags().Float64Var(&ratio, "ratio", 2, "Risk/reward ratio")
-// 	command.MarkFlagRequired("inv")
-// 	command.MarkFlagRequired("entry")
-// 	command.MarkFlagRequired("stop")
-// 	command.ValidArgs = s.getSymbolList()
-// 	cmd.AddCommand(command)
-// }
+			shares := inv / entry
+			fmt.Printf("%s: %s %s buys %s %s at %s\n",
+				color.Green.Render("Shares"),
+				formatBasePrice(info, inv),
+				color.LightBlue.Render(info.QuoteAsset),
+				formatBasePrice(info, shares),
+				color.LightBlue.Render(info.BaseAsset),
+				formatQuotePrice(info, entry),
+			)
+			fmt.Printf("%s: %s %s\n",
+				color.Green.Render("Risk"),
+				formatBasePrice(info, shares*(entry-stop)),
+				color.LightBlue.Render(info.QuoteAsset),
+			)
+			fmt.Printf("%s: %s %s if sold at %s %s\n",
+				color.Green.Render("Earnings"),
+				formatBasePrice(info, shares*(entry-stop)*ratio),
+				color.LightBlue.Render(info.QuoteAsset),
+				formatBasePrice(info, entry+(entry-stop)*ratio),
+				color.LightBlue.Render(info.BaseAsset),
+			)
+			return nil
+		},
+		RequiredFlags: []string{"inv", "entry", "stop"},
+	}
+	command.Flags().Float64Var(&inv, "inv", 0, "Investment amount")
+	command.Flags().Float64Var(&entry, "entry", 1, "Entry price")
+	command.Flags().Float64Var(&stop, "stop", 1, "Stop price")
+	command.Flags().Float64Var(&ratio, "ratio", 2, "Risk/reward ratio")
+	scope.AddCommand(command)
+}
 
 func addConvertCommand(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
 	var amount float64
