@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/adshao/go-binance"
+	binance "github.com/adshao/go-binance/v2"
 )
 
 func byLockedBalance(c1, c2 *binance.Balance) bool {

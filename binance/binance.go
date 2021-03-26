@@ -4,14 +4,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"math"
+	"net/http"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/adshao/go-binance"
+	binance "github.com/adshao/go-binance/v2"
 	"github.com/eliquious/console"
 	"github.com/gookit/color"
 	"github.com/spf13/cobra"
@@ -26,10 +28,21 @@ func NewBinanceExchangeScope() (*console.Scope, error) {
 		return nil, errors.New("Binance scope requires env variables: BINANCE_API_KEY and BINANCE_API_SECRET")
 	}
 
+	proxyUsername := os.Getenv("PROXY_USER")
+	proxyPassword := os.Getenv("PROXY_PASS")
+	if proxyPassword == "" || proxyUsername == "" {
+		return nil, errors.New("Binance scope requires env variables: PROXY_USER and PROXY_PASS")
+	}
+
 	client := binance.NewClient(apiKey, apiSecret)
+	client.HTTPClient = &http.Client{
+		Transport: ProxyRoundTripper(nil, proxyUsername, proxyPassword),
+	}
+
 	exch := client.NewExchangeInfoService()
 	resp, err := exch.Do(context.Background())
 	if err != nil {
+		log.Println(err)
 		return nil, errors.New("failed to list symbols")
 	}
 
