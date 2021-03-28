@@ -15,8 +15,9 @@ import (
 
 	binance "github.com/adshao/go-binance/v2"
 	"github.com/eliquious/console"
+	"github.com/eliquious/console/colors"
 	"github.com/gookit/color"
-	"github.com/spf13/cobra"
+	"github.com/olekukonko/tablewriter"
 )
 
 // NewBinanceExchangeScope creates a new scope for the Binance crypto exchange
@@ -51,12 +52,15 @@ func NewBinanceExchangeScope() (*console.Scope, error) {
 	addRateLimitCommand(scope, client)
 	addServerTimeCommand(scope, client)
 	addPriceCommands(scope, client, resp.Symbols)
-	addAccountCommands(scope, client)
+	addAccountCommands(scope, client, resp.Symbols)
 	addDepthCommand(scope, client, resp.Symbols)
 	addCalcSharesCommand(scope, client, resp.Symbols)
 	addRiskCommand(scope, client, resp.Symbols)
-	addConvertCommand(scope, client, resp.Symbols)
-
+	addCurrentValueCommand(scope, client, resp.Symbols)
+	addHistoricalMarketTrades(scope, client, resp.Symbols)
+	addRecentMarketTrades(scope, client, resp.Symbols)
+	addAssetDetail(scope, client, resp.Symbols)
+	addSymbolDetail(scope, client, resp.Symbols)
 	return scope, nil
 }
 
@@ -65,7 +69,7 @@ type binanceScope struct {
 	description string
 	client      *binance.Client
 	symbols     []binance.Symbol
-	command     *cobra.Command
+	// command     *cobra.Command
 }
 
 func addRateLimitCommand(scope *console.Scope, client *binance.Client) {
@@ -279,7 +283,7 @@ func getCurrentPrices(client *binance.Client) (map[string]string, error) {
 	return currentPrices, nil
 }
 
-func addAccountCommands(scope *console.Scope, client *binance.Client) {
+func addAccountCommands(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
 	accountInfoCommand := &console.Command{
 		Use:   "account-info",
 		Short: "Show user account info",
@@ -296,9 +300,9 @@ func addAccountCommands(scope *console.Scope, client *binance.Client) {
 			fmt.Printf("- %s:  %d\n", color.LightGreen.Render("Buyer Commission"), resp.BuyerCommission)
 			fmt.Printf("- %s: %d\n", color.LightGreen.Render("Seller Commission"), resp.SellerCommission)
 			fmt.Println("\nPermissions:")
-			fmt.Printf("- %s: %v\n", color.LightGreen.Render("Can Trade"), resp.CanTrade)
-			fmt.Printf("- %s: %v\n", color.LightGreen.Render("Can Trade"), resp.CanDeposit)
-			fmt.Printf("- %s: %v\n", color.LightGreen.Render("Can Trade"), resp.CanWithdraw)
+			fmt.Printf("- %s:    %v\n", color.LightGreen.Render("Can Trade"), resp.CanTrade)
+			fmt.Printf("- %s:  %v\n", color.LightGreen.Render("Can Deposit"), resp.CanDeposit)
+			fmt.Printf("- %s: %v\n", color.LightGreen.Render("Can Withdraw"), resp.CanWithdraw)
 			return nil
 		},
 	}
@@ -335,6 +339,68 @@ func addAccountCommands(scope *console.Scope, client *binance.Client) {
 		},
 	}
 	scope.AddCommand(accountBalanceCommand)
+
+	var symbol string
+	var limit int
+	accountTradesCommand := &console.Command{
+		Use:           "account-trades",
+		Short:         "Show user account trades",
+		RequiredFlags: []string{"symbol"},
+		Suggestions: func(env *console.Environment, args []string) []string {
+			if contains(args, "--symbol") && len(args) > 2 {
+				return getSymbolList(symbols)
+			}
+			return []string{}
+		},
+		Run: func(env *console.Environment, cmd *console.Command, args []string) error {
+			exchange := client.NewListTradesService()
+
+			// filter by symbol if set
+			if cmd.Flags().Changed("symbol") {
+				exchange = exchange.Symbol(symbol)
+			}
+
+			// add query limit
+			if cmd.Flags().Changed("limit") {
+				exchange = exchange.Limit(limit)
+			}
+
+			trades, err := exchange.Do(context.Background())
+			if err != nil {
+				return err
+			}
+
+			table := tablewriter.NewWriter(os.Stdout)
+			table.SetHeader([]string{"ID", "Timestamp", "Price", "Quantity", "Side"})
+
+			// ID, timestamp,price,qty
+			for index := 0; index < len(trades); index++ {
+				trade := trades[index]
+
+				var side string
+				if trade.IsBuyer {
+					side = color.Green.Render("BUY")
+				} else {
+					side = color.Red.Render("SELL")
+				}
+
+				row := []string{
+					strconv.Itoa(int(trade.ID)),
+					time.Unix(0, trade.Time*1e6).Local().Format("2006-01-02T15:04:05"),
+					trade.Price,
+					trade.Quantity,
+					side,
+				}
+				table.Append(row)
+			}
+			table.Render() // Send output
+
+			return nil
+		},
+	}
+	accountTradesCommand.Flags().StringVar(&symbol, "symbol", "", "Filter trades by this symbol")
+	accountTradesCommand.Flags().IntVar(&limit, "limit", 50, "Number of results to return")
+	scope.AddCommand(accountTradesCommand)
 }
 
 func addDepthCommand(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
@@ -342,11 +408,13 @@ func addDepthCommand(scope *console.Scope, client *binance.Client, symbols []bin
 		Use:              "depth",
 		Short:            "Show symbol depth",
 		EagerSuggestions: true,
+		ValidateArgs:     console.ExactArgs(1),
 		Suggestions: func(env *console.Environment, args []string) []string {
 			return getSymbolList(symbols)
 		},
 		Run: func(env *console.Environment, cmd *console.Command, args []string) error {
 			exchange := client.NewDepthService()
+
 			resp, err := exchange.Symbol(strings.ToUpper(args[0])).Limit(10).Do(context.Background())
 			if err != nil {
 				return err
@@ -524,11 +592,11 @@ func addRiskCommand(scope *console.Scope, client *binance.Client, symbols []bina
 	scope.AddCommand(command)
 }
 
-func addConvertCommand(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
+func addCurrentValueCommand(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
 	var amount float64
 	command := &console.Command{
-		Use:           "convert",
-		Short:         "Convert returns the value of an asset for the given symbols",
+		Use:           "current-value",
+		Short:         "Get the current value of an asset for the given symbols",
 		ValidateArgs:  console.MinimumArgs(1),
 		RequiredFlags: []string{"amount"},
 		Suggestions: func(env *console.Environment, args []string) []string {
@@ -573,6 +641,232 @@ func addConvertCommand(scope *console.Scope, client *binance.Client, symbols []b
 		},
 	}
 	command.Flags().Float64Var(&amount, "amount", 1, "Amount of asset")
+	scope.AddCommand(command)
+}
+
+func addHistoricalMarketTrades(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
+	var symbol string
+	var limit int
+	command := &console.Command{
+		Use:           "historical-market-trades",
+		Short:         "List the historical market trades",
+		RequiredFlags: []string{"symbol"},
+		Suggestions: func(env *console.Environment, args []string) []string {
+			if contains(args, "--symbol") && len(args) > 2 {
+				return getSymbolList(symbols)
+			}
+			return []string{}
+		},
+		Run: func(env *console.Environment, cmd *console.Command, args []string) error {
+			exchange := client.NewHistoricalTradesService()
+
+			// filter by symbol if set
+			if cmd.Flags().Changed("symbol") {
+				exchange = exchange.Symbol(symbol)
+			}
+
+			// add query limit
+			if cmd.Flags().Changed("limit") {
+				exchange = exchange.Limit(limit)
+			}
+
+			trades, err := exchange.Do(context.Background())
+			if err != nil {
+				return err
+			}
+
+			table := tablewriter.NewWriter(os.Stdout)
+			table.SetHeader([]string{"ID", "Timestamp", "Price", "Quantity"})
+
+			// ID, timestamp,price,qty
+			for index := 0; index < len(trades); index++ {
+				trade := trades[index]
+
+				row := []string{
+					strconv.Itoa(int(trade.ID)),
+					time.Unix(0, trade.Time*1e6).Local().Format("2006-01-02T15:04:05"),
+					trade.Price,
+					trade.Quantity,
+				}
+				table.Append(row)
+
+				// fmt.Printf("%s: %s\n  %s: %d\n  %s: %s\n\n",
+				// 	color.Green.Render("Interval"),
+				// 	limit.Interval,
+				// 	color.Green.Render("Limit"),
+				// 	limit.Limit,
+				// 	color.Green.Render("Type"),
+				// 	limit.RateLimitType,
+				// )
+			}
+			table.Render() // Send output
+
+			return nil
+		},
+	}
+	command.Flags().StringVar(&symbol, "symbol", "", "Filter trades by this symbol")
+	command.Flags().IntVar(&limit, "limit", 50, "Number of results to return")
+	scope.AddCommand(command)
+}
+
+func addRecentMarketTrades(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
+	var symbol string
+	var limit int
+	command := &console.Command{
+		Use:           "recent-market-trades",
+		Short:         "List the recent market trades",
+		RequiredFlags: []string{"symbol"},
+		Suggestions: func(env *console.Environment, args []string) []string {
+			if contains(args, "--symbol") && len(args) > 2 {
+				return getSymbolList(symbols)
+			}
+			return []string{}
+		},
+		Run: func(env *console.Environment, cmd *console.Command, args []string) error {
+			exchange := client.NewRecentTradesService()
+
+			// filter by symbol if set
+			if cmd.Flags().Changed("symbol") {
+				exchange = exchange.Symbol(symbol)
+			}
+
+			// add query limit
+			if cmd.Flags().Changed("limit") {
+				exchange = exchange.Limit(limit)
+			}
+
+			trades, err := exchange.Do(context.Background())
+			if err != nil {
+				return err
+			}
+
+			table := tablewriter.NewWriter(os.Stdout)
+			table.SetHeader([]string{"ID", "Timestamp", "Price", "Quantity"})
+
+			// ID, timestamp,price,qty
+			for index := 0; index < len(trades); index++ {
+				trade := trades[index]
+
+				row := []string{
+					strconv.Itoa(int(trade.ID)),
+					time.Unix(0, trade.Time*1e6).Local().Format("2006-01-02T15:04:05"),
+					trade.Price,
+					trade.Quantity,
+				}
+				table.Append(row)
+			}
+			table.Render() // Send output
+
+			return nil
+		},
+	}
+	command.Flags().StringVar(&symbol, "symbol", "", "Filter trades by this symbol")
+	command.Flags().IntVar(&limit, "limit", 50, "Number of results to return")
+	scope.AddCommand(command)
+}
+
+func addAssetDetail(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
+	var asset string
+	command := &console.Command{
+		Use:           "asset-detail",
+		Short:         "Returns the asset details",
+		RequiredFlags: []string{"asset"},
+		Suggestions: func(env *console.Environment, args []string) []string {
+			if contains(args, "--asset") && len(args) > 2 {
+				return getBaseAssetList(symbols)
+			}
+			return []string{}
+		},
+		EagerSuggestions: false,
+		Run: func(env *console.Environment, cmd *console.Command, args []string) error {
+			exchange := client.NewGetAssetDetailService()
+
+			resp, err := exchange.Do(context.Background())
+			if err != nil {
+				return err
+			}
+
+			if details, ok := resp[asset]; ok {
+
+				var canDeposit, canWithdraw string
+				if details.DepositStatus {
+					canDeposit = colors.Green("true")
+				} else {
+					canDeposit = colors.Red("false")
+				}
+				if details.WithdrawStatus {
+					canWithdraw = colors.Green("true")
+				} else {
+					canWithdraw = colors.Red("false")
+				}
+
+				fmt.Printf("Deposit Status: %v\nDeposit Tip: %s\nWithdraw Status: %v\nMinimum Withdraw Amount: %f\nWithdraw Fee: %f\n",
+					canDeposit,
+					details.DepositTip,
+					canWithdraw,
+					details.MinWithdrawAmount,
+					details.WithdrawFee,
+				)
+			} else {
+				return fmt.Errorf("unknown asset: %s", asset)
+			}
+
+			return nil
+		},
+	}
+	command.Flags().StringVar(&asset, "asset", "", "Get the details for this asset")
+	scope.AddCommand(command)
+}
+
+func addSymbolDetail(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
+	var symbol string
+	command := &console.Command{
+		Use:           "symbol-detail",
+		Short:         "Returns the symbol details",
+		RequiredFlags: []string{"symbol"},
+		Suggestions: func(env *console.Environment, args []string) []string {
+			if contains(args, "--symbol") && len(args) > 2 {
+				return getSymbolList(symbols)
+			}
+			return []string{}
+		},
+		EagerSuggestions: false,
+		Run: func(env *console.Environment, cmd *console.Command, args []string) error {
+			s := getSymbolMap(symbols)
+
+			if details, ok := s[symbol]; ok {
+				// Status                 string                   `json:"status"`
+				// BaseAsset              string                   `json:"baseAsset"`
+				// BaseAssetPrecision     int                      `json:"baseAssetPrecision"`
+				// QuoteAsset             string                   `json:"quoteAsset"`
+				// QuotePrecision         int                      `json:"quotePrecision"`
+				// OrderTypes             []string                 `json:"orderTypes"`
+				// IcebergAllowed         bool                     `json:"icebergAllowed"`
+				// OcoAllowed             bool                     `json:"ocoAllowed"`
+				// IsSpotTradingAllowed   bool                     `json:"isSpotTradingAllowed"`
+				// IsMarginTradingAllowed bool                     `json:"isMarginTradingAllowed"`
+
+				fmt.Printf("Symbol Status: %v\nBase Asset: %s\nBase Asset Precision: %d\nQuote Asset: %s\nQuote Precision: %d\nIceberg Allowed: %s\nOCO Orders Allowed: %s\nSpot Trading: %s\nMargin Trading: %s\n",
+					details.Status,
+					details.BaseAsset,
+					details.BaseAssetPrecision,
+					details.QuoteAsset,
+					details.QuotePrecision,
+					formatBoolean(details.IcebergAllowed),
+					formatBoolean(details.OcoAllowed),
+					formatBoolean(details.IsSpotTradingAllowed),
+					formatBoolean(details.IsMarginTradingAllowed),
+				)
+
+				fmt.Printf("\nSupported Order Types:\n%s\n\n", strings.Join(details.OrderTypes, "\n"))
+			} else {
+				return fmt.Errorf("unknown symbol: %s", symbol)
+			}
+
+			return nil
+		},
+	}
+	command.Flags().StringVar(&symbol, "symbol", "", "Get the details for the symbol")
 	scope.AddCommand(command)
 }
 
@@ -634,7 +928,6 @@ func getBaseAssetMap(symbols []binance.Symbol) map[string][]binance.Symbol {
 		if len(strings.TrimSpace(symbol.BaseAsset)) > 0 {
 			baseAssetMap[symbol.BaseAsset] = append(baseAssetMap[symbol.BaseAsset], symbol)
 		}
-
 	}
 	return baseAssetMap
 }
@@ -648,6 +941,13 @@ func getQuoteAssetMap(symbols []binance.Symbol) map[string][]binance.Symbol {
 		}
 	}
 	return quoteAssetMap
+}
+
+func formatBoolean(val bool) string {
+	if val {
+		return colors.Green("true")
+	}
+	return colors.Red("false")
 }
 
 func padLeft(str, pad string, length int) string {

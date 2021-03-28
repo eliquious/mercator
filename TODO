@@ -1,0 +1,16 @@
+Add profit command for a particular symbol
+    - Fetches the account balance and multiplies the quantity by a future price
+
+Estimated profit
+    - Spend x amount to buy asset at Y price and sell at Z price.
+
+Add limit buy/sell commands
+Add withdrawal command
+List open orders
+Cancel all open orders
+Cancel particular order
+List open orders
+List historical orders
+Get order status
+Deposit History
+Withdrawal History
