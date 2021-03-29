@@ -61,6 +61,7 @@ func NewBinanceExchangeScope() (*console.Scope, error) {
 	addRecentMarketTrades(scope, client, resp.Symbols)
 	addAssetDetail(scope, client, resp.Symbols)
 	addSymbolDetail(scope, client, resp.Symbols)
+	addFutureValueCommand(scope, client, resp.Symbols)
 	return scope, nil
 }
 
@@ -644,6 +645,39 @@ func addCurrentValueCommand(scope *console.Scope, client *binance.Client, symbol
 	scope.AddCommand(command)
 }
 
+func addFutureValueCommand(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
+	var amount, price float64
+	command := &console.Command{
+		Use:              "future-value",
+		Short:            "Calculate value of shares if sold at a future price",
+		EagerSuggestions: false,
+		RequiredFlags:    []string{"amount", "price"},
+		Run: func(env *console.Environment, cmd *console.Command, args []string) error {
+
+			// required flags
+			if !cmd.Flags().Changed("amount") {
+				return errors.New("amount of shares is required")
+			}
+
+			if !cmd.Flags().Changed("price") {
+				return errors.New("price is required")
+			}
+
+			if price == 0 {
+				return errors.New("current price is 0.0")
+			} else if price < 0 {
+				return errors.New("price must be positive")
+			}
+
+			fmt.Printf("The %s shares would be valued at %s if sold at %s\n", formatShares(amount), formatValue(price*amount), formatPrice(price))
+			return nil
+		},
+	}
+	command.Flags().Float64VarP(&amount, "amount", "a", 0, "Number of shares")
+	command.Flags().Float64VarP(&price, "price", "p", 1, "Buy price")
+	scope.AddCommand(command)
+}
+
 func addHistoricalMarketTrades(scope *console.Scope, client *binance.Client, symbols []binance.Symbol) {
 	var symbol string
 	var limit int
@@ -948,6 +982,18 @@ func formatBoolean(val bool) string {
 		return colors.Green("true")
 	}
 	return colors.Red("false")
+}
+
+func formatValue(val float64) string {
+	return colors.Green(fmt.Sprintf("%.8f", val))
+}
+
+func formatPrice(val float64) string {
+	return colors.LightBlue(fmt.Sprintf("%.8f", val))
+}
+
+func formatShares(val float64) string {
+	return colors.Yellow(fmt.Sprintf("%.8f", val))
 }
 
 func padLeft(str, pad string, length int) string {
